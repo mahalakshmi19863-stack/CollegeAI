@@ -1,4 +1,5 @@
 import hashlib
+import asyncio
 import logging
 import re
 from typing import List
@@ -105,7 +106,8 @@ class EmbeddingService:
             embeddings: List[List[float]] = []
 
             for text in texts:
-                response = client.models.embed_content(
+                response = await asyncio.to_thread(
+                    client.models.embed_content,
                     model=self.model,
                     contents=text,
                     config=types.EmbedContentConfig(

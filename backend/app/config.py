@@ -29,6 +29,9 @@ class Settings(BaseSettings):
         default=True,
         description="Keep the in-memory fallback active when Atlas or local MongoDB is unavailable",
     )
+    MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 30000
+    MONGODB_CONNECT_TIMEOUT_MS: int = 30000
+    MONGODB_SOCKET_TIMEOUT_MS: int = 120000
 
     ADMIN_EMAIL: str = Field(
         default="phase5.live.e28f8a94d7@college.edu",

@@ -54,8 +54,9 @@ class DatabaseManager:
         try:
             self.client = AsyncIOMotorClient(
                 settings.MONGODB_URI,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000,
+                serverSelectionTimeoutMS=settings.MONGODB_SERVER_SELECTION_TIMEOUT_MS,
+                connectTimeoutMS=settings.MONGODB_CONNECT_TIMEOUT_MS,
+                socketTimeoutMS=settings.MONGODB_SOCKET_TIMEOUT_MS,
             )
             # Verify connection
             await self.client.admin.command("ping")

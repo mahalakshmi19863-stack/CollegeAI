@@ -1,8 +1,43 @@
 import pytest
 import numpy as np
+from backend.app.config import settings
+import backend.app.rag.embeddings as embeddings_module
 from backend.app.rag.embeddings import EmbeddingService, embedding_service
 from backend.app.utils.errors import EmbeddingFailedException
 from backend.app.rag.vector_search import cosine_similarity, vector_search_engine
+
+
+def test_mongodb_timeouts_allow_atlas_recovery():
+    assert settings.MONGODB_SERVER_SELECTION_TIMEOUT_MS == 30000
+    assert settings.MONGODB_CONNECT_TIMEOUT_MS == 30000
+    assert settings.MONGODB_SOCKET_TIMEOUT_MS == 120000
+
+
+@pytest.mark.asyncio
+async def test_gemini_embedding_runs_blocking_sdk_off_event_loop(monkeypatch):
+    class FakeClient:
+        class models:
+            @staticmethod
+            def embed_content(**kwargs):
+                return type("Response", (), {"embedding": type("Embedding", (), {"values": [0.1] * 768})()})()
+
+    import google.genai
+
+    service = EmbeddingService()
+    service.api_key = "test-key"
+    monkeypatch.setattr(google.genai, "Client", lambda api_key: FakeClient())
+    calls = []
+
+    async def fake_to_thread(function, **kwargs):
+        calls.append(function)
+        return function(**kwargs)
+
+    monkeypatch.setattr(embeddings_module.asyncio, "to_thread", fake_to_thread)
+
+    result = await service._embed_gemini(["CSE syllabus"])
+
+    assert len(result) == 1
+    assert calls
 
 
 @pytest.mark.asyncio
