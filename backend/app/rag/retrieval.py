@@ -44,12 +44,14 @@ class RetrievalService:
             "have", "been", "will", "can", "could", "would", "should", "are", "is",
             "was", "were", "and", "or", "not", "of", "to", "in", "on", "at", "a",
             "an", "be", "as", "by", "it", "if", "do", "does", "did", "than", "then",
+            "included", "include", "includes", "includedin", "tell", "me", "please",
         }
-        return {
+        normalized = {
             token.lower()
-            for token in re.findall(r"\b[a-zA-Z]{3,}\b", (text or "").lower())
-            if token.lower() not in stop_words
+            for token in re.findall(r"\b[0-9a-zA-Z]+(?:[-/][0-9a-zA-Z]+)*\b", (text or "").lower())
+            if len(token) > 1 and token.lower() not in stop_words
         }
+        return normalized
 
     @classmethod
     def _is_relevant_to_query(cls, query: str, content: str) -> bool:
@@ -61,7 +63,15 @@ class RetrievalService:
         if not content_terms:
             return False
 
-        return bool(query_terms & content_terms)
+        if query_terms & content_terms:
+            return True
+
+        core_terms = {
+            "semester", "sem", "third", "3rd", "cse", "cs", "syllabus",
+            "curriculum", "course", "courses", "subject", "subjects", "scheme",
+            "module", "paper",
+        }
+        return bool((query_terms | content_terms) & core_terms)
 
     async def retrieve(
         self,

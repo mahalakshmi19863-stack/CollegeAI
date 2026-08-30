@@ -165,6 +165,57 @@ async def test_generation_accepts_relevant_academic_calendar_answer(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_generation_accepts_relevant_cse_syllabus_question(monkeypatch):
+    candidate = ChunkSearchCandidate(
+        chunk_id="chunk-cse-1",
+        document_id="doc-cse-syllabus",
+        document_name="3rd Semester CSE Scheme and Syllabus",
+        document_version=1,
+        page_number=8,
+        category="Academic",
+        department="CSE",
+        content="3rd Semester CSE syllabus includes Data Structures, Digital Electronics, Computer Organization, and Discrete Mathematics.",
+        score=0.81,
+    )
+    retrieval = RetrievalResult(
+        candidates=[candidate],
+        relevant_candidates=[candidate],
+        sources=[
+            SourceItem(
+                document_id="doc-cse-syllabus",
+                document_name="3rd Semester CSE Scheme and Syllabus",
+                page_number=8,
+                relevance_score=0.81,
+                category="Academic",
+                department="CSE",
+                snippet=candidate.content,
+            )
+        ],
+        formatted_context="--- [SOURCE: 3rd Semester CSE Scheme and Syllabus (Page 8)] ---\n3rd Semester CSE syllabus includes Data Structures, Digital Electronics, Computer Organization, and Discrete Mathematics.",
+        stats=RetrievalStats(chunks_retrieved=1, chunks_used=1),
+    )
+
+    async def fake_retrieve(**kwargs):
+        return retrieval
+
+    async def fake_generation(prompt):
+        return "The 3rd semester CSE syllabus includes Data Structures, Digital Electronics, Computer Organization, and Discrete Mathematics."
+
+    pipeline = RAGPipeline()
+    monkeypatch.setattr("backend.app.rag.pipeline.retrieval_service.retrieve", fake_retrieve)
+    monkeypatch.setattr(pipeline, "_call_gemini", fake_generation)
+    pipeline.provider = "GEMINI"
+    pipeline.api_key = "test-only"
+
+    result = await pipeline.generate_response(
+        "What subjects are included in the 3rd semester CSE syllabus?"
+    )
+
+    assert "Data Structures" in result["answer"]
+    assert result["sources"][0].document_name == "3rd Semester CSE Scheme and Syllabus"
+
+
+@pytest.mark.asyncio
 async def test_generation_rejects_unrelated_hostel_fee_question(monkeypatch):
     irrelevant_candidate = ChunkSearchCandidate(
         chunk_id="chunk-academic-2",
