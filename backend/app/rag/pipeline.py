@@ -15,6 +15,15 @@ class RAGPipeline:
         self.api_key = settings.LLM_API_KEY
         self.model = settings.LLM_MODEL
 
+    @staticmethod
+    def _is_semantically_relevant(question: str, retrieval_res: RetrievalResult) -> bool:
+        if not retrieval_res or not retrieval_res.relevant_candidates:
+            return False
+        return any(
+            retrieval_service._is_relevant_to_query(question, candidate.content)
+            for candidate in retrieval_res.relevant_candidates
+        )
+
     async def _call_gemini(self, prompt: str) -> str:
         """Call Google Gemini generative API."""
         if not self.api_key:
@@ -98,10 +107,14 @@ class RAGPipeline:
             department=department,
         )
 
-        # 2. Strict hallucination guard: If no chunks met relevance threshold
-        if not retrieval_res.relevant_candidates or not retrieval_res.formatted_context:
+        # 2. Strict hallucination guard: reject weak or semantically mismatched retrieval
+        if (
+            not retrieval_res.relevant_candidates
+            or not retrieval_res.formatted_context
+            or not self._is_semantically_relevant(question, retrieval_res)
+        ):
             logger.info(
-                f"Question rejected due to insufficient context: '{question}'"
+                f"Question rejected due to insufficient or irrelevant context: '{question}'"
             )
             return {
                 "answer": UNKNOWN_INFORMATION_MESSAGE,

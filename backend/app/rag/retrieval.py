@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from typing import List, Optional, Tuple
 from ..config import settings
@@ -35,6 +36,33 @@ class RetrievalService:
         self.top_k = top_k
         self.relevance_threshold = relevance_threshold
 
+    @staticmethod
+    def _extract_keywords(text: str) -> set[str]:
+        stop_words = {
+            "what", "when", "where", "which", "how", "who", "why", "the", "this",
+            "that", "for", "with", "about", "into", "from", "your", "their", "there",
+            "have", "been", "will", "can", "could", "would", "should", "are", "is",
+            "was", "were", "and", "or", "not", "of", "to", "in", "on", "at", "a",
+            "an", "be", "as", "by", "it", "if", "do", "does", "did", "than", "then",
+        }
+        return {
+            token.lower()
+            for token in re.findall(r"\b[a-zA-Z]{3,}\b", (text or "").lower())
+            if token.lower() not in stop_words
+        }
+
+    @classmethod
+    def _is_relevant_to_query(cls, query: str, content: str) -> bool:
+        query_terms = cls._extract_keywords(query)
+        if not query_terms:
+            return True
+
+        content_terms = cls._extract_keywords(content)
+        if not content_terms:
+            return False
+
+        return bool(query_terms & content_terms)
+
     async def retrieve(
         self,
         query: str,
@@ -55,9 +83,12 @@ class RetrievalService:
             department=department,
         )
 
-        # Step 3: Filter candidates by relevance threshold
+        # Step 3: Filter candidates by score threshold and topical relevance
         relevant_candidates = [
-            c for c in candidates if c.score >= self.relevance_threshold
+            c
+            for c in candidates
+            if c.score >= self.relevance_threshold
+            and self._is_relevant_to_query(query, c.content)
         ]
 
         # Step 4: Construct source items and formatted context

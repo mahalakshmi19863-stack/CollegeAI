@@ -116,6 +116,104 @@ async def test_generation_falls_back_to_retrieved_facts_when_llm_fails(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_generation_accepts_relevant_academic_calendar_answer(monkeypatch):
+    candidate = ChunkSearchCandidate(
+        chunk_id="chunk-academic-1",
+        document_id="doc-academic",
+        document_name="Academic Calendar 2026-27",
+        document_version=1,
+        page_number=1,
+        category="Academic",
+        department="General",
+        content="The commencement of classes is scheduled for 12 August 2026.",
+        score=0.91,
+    )
+    retrieval = RetrievalResult(
+        candidates=[candidate],
+        relevant_candidates=[candidate],
+        sources=[
+            SourceItem(
+                document_id="doc-academic",
+                document_name="Academic Calendar 2026-27",
+                page_number=1,
+                relevance_score=0.91,
+                category="Academic",
+                department="General",
+                snippet=candidate.content,
+            )
+        ],
+        formatted_context="--- [SOURCE: Academic Calendar 2026-27 (Page 1)] ---\nThe commencement of classes is scheduled for 12 August 2026.",
+        stats=RetrievalStats(chunks_retrieved=1, chunks_used=1),
+    )
+
+    async def fake_retrieve(**kwargs):
+        return retrieval
+
+    async def fake_generation(prompt):
+        return "The commencement of classes is scheduled for 12 August 2026."
+
+    pipeline = RAGPipeline()
+    monkeypatch.setattr("backend.app.rag.pipeline.retrieval_service.retrieve", fake_retrieve)
+    monkeypatch.setattr(pipeline, "_call_gemini", fake_generation)
+    pipeline.provider = "GEMINI"
+    pipeline.api_key = "test-only"
+
+    result = await pipeline.generate_response("When does the college start classes?")
+
+    assert result["answer"] == "The commencement of classes is scheduled for 12 August 2026."
+    assert result["sources"][0].document_name == "Academic Calendar 2026-27"
+
+
+@pytest.mark.asyncio
+async def test_generation_rejects_unrelated_hostel_fee_question(monkeypatch):
+    irrelevant_candidate = ChunkSearchCandidate(
+        chunk_id="chunk-academic-2",
+        document_id="doc-academic",
+        document_name="Academic Calendar 2026-27",
+        document_version=1,
+        page_number=1,
+        category="Academic",
+        department="General",
+        content="The commencement of classes is scheduled for 12 August 2026.",
+        score=0.53,
+    )
+    retrieval = RetrievalResult(
+        candidates=[irrelevant_candidate],
+        relevant_candidates=[irrelevant_candidate],
+        sources=[
+            SourceItem(
+                document_id="doc-academic",
+                document_name="Academic Calendar 2026-27",
+                page_number=1,
+                relevance_score=0.53,
+                category="Academic",
+                department="General",
+                snippet=irrelevant_candidate.content,
+            )
+        ],
+        formatted_context="--- [SOURCE: Academic Calendar 2026-27 (Page 1)] ---\nThe commencement of classes is scheduled for 12 August 2026.",
+        stats=RetrievalStats(chunks_retrieved=1, chunks_used=1),
+    )
+
+    async def fake_retrieve(**kwargs):
+        return retrieval
+
+    async def fake_generation(prompt):
+        raise AssertionError("LLM should not run for unrelated weak retrieval")
+
+    pipeline = RAGPipeline()
+    monkeypatch.setattr("backend.app.rag.pipeline.retrieval_service.retrieve", fake_retrieve)
+    monkeypatch.setattr(pipeline, "_call_gemini", fake_generation)
+    pipeline.provider = "GEMINI"
+    pipeline.api_key = "test-only"
+
+    result = await pipeline.generate_response("What is the hostel fee for the college?")
+
+    assert result["answer"] == "I couldn't find this information in the available college documents."
+    assert result["sources"] == []
+
+
+@pytest.mark.asyncio
 async def test_generation_rejects_missing_relevant_context(monkeypatch):
     retrieval = RetrievalResult(
         candidates=[],
