@@ -1,9 +1,18 @@
 from datetime import datetime, timezone
+import asyncio
 import logging
 import os
 import tempfile
 import uuid
 from typing import Optional
+from pymongo.errors import (
+    AutoReconnect,
+    ConnectionFailure,
+    NetworkTimeout,
+    ServerSelectionTimeoutError,
+    WaitQueueTimeoutError,
+)
+from pymongo import UpdateOne
 from ..config import settings
 from ..database.mongodb import db_manager
 from ..models.document import DocumentInDB, DocumentStatus
@@ -15,12 +24,36 @@ from .vector_search import vector_search_engine
 
 logger = logging.getLogger("college_ai.ingestion")
 
+TRANSIENT_MONGO_ERRORS = (
+    AutoReconnect,
+    ConnectionFailure,
+    NetworkTimeout,
+    ServerSelectionTimeoutError,
+    WaitQueueTimeoutError,
+)
+
 
 def utc_now():
     return datetime.now(timezone.utc)
 
 
 class DocumentIngestionPipeline:
+    @staticmethod
+    async def _retry_mongo_operation(operation, description: str):
+        for attempt in range(3):
+            try:
+                return await operation()
+            except TRANSIENT_MONGO_ERRORS:
+                if attempt == 2:
+                    raise
+                delay = 2**attempt
+                logger.warning(
+                    "Transient MongoDB error during %s; retrying in %ss.",
+                    description,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
     async def process_document(
         self,
         document_id: str,
@@ -36,12 +69,12 @@ class DocumentIngestionPipeline:
         logger.info(f"Starting ingestion for document {document_id} ({document_name})...")
 
         # 1. Update status to PROCESSING
-        await self._update_document_status(
-            document_id, DocumentStatus.PROCESSING
-        )
-
         temporary_path = None
         try:
+            await self._update_document_status(
+                document_id, DocumentStatus.PROCESSING
+            )
+
             # 2. Extract text and page numbers
             extraction_path = file_path
             if source_reference:
@@ -73,50 +106,74 @@ class DocumentIngestionPipeline:
             if not chunks:
                 raise ValueError("Chunking produced 0 chunks.")
 
-            # 4. Generate embeddings for all chunks in batch
-            chunk_texts = [c.content for c in chunks]
-            embeddings = await embedding_service.embed_documents(chunk_texts)
-
-            if len(embeddings) != len(chunks):
-                raise RuntimeError(
-                    f"Mismatch between chunks count ({len(chunks)}) and embeddings count ({len(embeddings)})"
-                )
-
             embedding_dimension = embedding_service.dimension
-            if any(len(embedding) != embedding_dimension for embedding in embeddings):
-                raise RuntimeError(
-                    f"Embedding dimension must be {embedding_dimension} for Atlas Vector Search."
-                )
-
-            # 5. Prepare documents for MongoDB storage & memory index
-            now = utc_now()
-            chunk_records = []
-            for i, chunk in enumerate(chunks):
-                chunk_doc = {
-                    "_id": chunk.id,
-                    "document_id": document_id,
-                    "document_name": document_name,
-                    "document_version": version,
-                    "content": chunk.content,
-                    "chunk_index": chunk.chunk_index,
-                    "page_number": chunk.page_number,
-                    "category": category,
-                    "department": department or "General",
-                    "embedding": embeddings[i],
-                    "is_active": True,
-                    "created_at": now,
-                }
-                chunk_records.append(chunk_doc)
-                vector_search_engine.register_memory_chunk(chunk_doc)
-
-            # 6. Save chunks to MongoDB
+            # 4. Replace old indexed chunks, then process bounded batches.
             if db_manager.is_connected and db_manager.document_chunks is not None:
-                await db_manager.document_chunks.delete_many(
-                    {"document_id": document_id}
+                await self._retry_mongo_operation(
+                    lambda: db_manager.document_chunks.delete_many(
+                        {"document_id": document_id}
+                    ),
+                    "removing previous document chunks",
                 )
-                await db_manager.document_chunks.insert_many(chunk_records)
 
-            # 7. Update document status to PROCESSED
+            now = utc_now()
+            processed_chunks = 0
+            batch_size = max(1, settings.INGESTION_BATCH_SIZE)
+            for start in range(0, len(chunks), batch_size):
+                chunk_batch = chunks[start : start + batch_size]
+                embeddings = await embedding_service.embed_documents(
+                    [chunk.content for chunk in chunk_batch]
+                )
+                if len(embeddings) != len(chunk_batch):
+                    raise RuntimeError(
+                        f"Mismatch between chunks count ({len(chunk_batch)}) and embeddings count ({len(embeddings)})"
+                    )
+                if any(len(embedding) != embedding_dimension for embedding in embeddings):
+                    raise RuntimeError(
+                        f"Embedding dimension must be {embedding_dimension} for Atlas Vector Search."
+                    )
+
+                chunk_records = [
+                    {
+                        "_id": chunk.id,
+                        "document_id": document_id,
+                        "document_name": document_name,
+                        "document_version": version,
+                        "content": chunk.content,
+                        "chunk_index": chunk.chunk_index,
+                        "page_number": chunk.page_number,
+                        "category": category,
+                        "department": department or "General",
+                        "embedding": embedding,
+                        "is_active": True,
+                        "created_at": now,
+                    }
+                    for chunk, embedding in zip(chunk_batch, embeddings)
+                ]
+
+                if db_manager.is_connected and db_manager.document_chunks is not None:
+                    operations = [
+                        UpdateOne(
+                            {"_id": record["_id"]},
+                            {"$set": record},
+                            upsert=True,
+                        )
+                        for record in chunk_records
+                    ]
+                    await self._retry_mongo_operation(
+                        lambda: db_manager.document_chunks.bulk_write(operations, ordered=False),
+                        f"inserting chunk batch {start // batch_size + 1}",
+                    )
+                for chunk_doc in chunk_records:
+                    vector_search_engine.register_memory_chunk(chunk_doc)
+                processed_chunks += len(chunk_records)
+                await self._update_document_status(
+                    document_id=document_id,
+                    status=DocumentStatus.PROCESSING,
+                    chunk_count=processed_chunks,
+                )
+
+            # 5. Update document status to PROCESSED
             await self._update_document_status(
                 document_id=document_id,
                 status=DocumentStatus.PROCESSED,
@@ -164,8 +221,11 @@ class DocumentIngestionPipeline:
             update_data["total_pages"] = total_pages
 
         if db_manager.is_connected and db_manager.documents is not None:
-            await db_manager.documents.update_one(
-                {"_id": document_id}, {"$set": update_data}
+            await self._retry_mongo_operation(
+                lambda: db_manager.documents.update_one(
+                    {"_id": document_id}, {"$set": update_data}
+                ),
+                f"updating status for document {document_id}",
             )
 
         from ..documents.service import document_service

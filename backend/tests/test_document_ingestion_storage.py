@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
+from pymongo.errors import AutoReconnect
 
 from backend.app.database.mongodb import db_manager
 from backend.app.documents.service import _memory_documents, document_service
@@ -38,10 +40,29 @@ class FakeDocumentsCollection:
         self.last_query = None
         self.last_update = None
 
+    async def update_one(self, query, update):
+        self.last_query = query
+        self.last_update = update
+
     async def update_many(self, query, update):
         self.last_query = query
         self.last_update = update
         return type("Result", (), {"modified_count": 1})()
+
+
+class FakeChunkCollection:
+    def __init__(self):
+        self.bulk_write_calls = 0
+        self.records = []
+
+    async def delete_many(self, query):
+        self.records.clear()
+
+    async def bulk_write(self, operations, ordered=False):
+        self.bulk_write_calls += 1
+        if self.bulk_write_calls == 1:
+            raise AutoReconnect("temporary connection closed")
+        self.records.extend(operation._doc["$set"] for operation in operations)
 
 
 @pytest.fixture(autouse=True)
@@ -174,5 +195,60 @@ async def test_stale_processing_documents_are_marked_failed():
     assert documents.last_update["$set"]["status"] == DocumentStatus.FAILED.value
 
 
+@pytest.mark.asyncio
+async def test_large_ingestion_batches_embeddings_and_retries_mongodb_write(monkeypatch):
+    documents = FakeDocumentsCollection()
+    chunks_collection = FakeChunkCollection()
+    db_manager.is_connected = True
+    db_manager.db = type(
+        "Database",
+        (),
+        {"documents": documents, "document_chunks": chunks_collection},
+    )()
+    monkeypatch.setattr("backend.app.rag.ingestion.settings.INGESTION_BATCH_SIZE", 2)
+    embedding_batch_sizes = []
+
+    async def fake_embed(texts):
+        embedding_batch_sizes.append(len(texts))
+        return [[0.1] * 768 for _ in texts]
+
+    monkeypatch.setattr(
+        "backend.app.rag.ingestion.embedding_service.embed_documents", fake_embed
+    )
+    monkeypatch.setattr("backend.app.rag.ingestion.asyncio.sleep", lambda _: _async_sleep())
+
+    chunks = [
+        SimpleNamespace(
+            id=f"chunk-{index}",
+            content=f"CSE subject {index}",
+            chunk_index=index,
+            page_number=index + 1,
+        )
+        for index in range(5)
+    ]
+    monkeypatch.setattr(
+        "backend.app.rag.ingestion.chunker.chunk_document_pages",
+        lambda **kwargs: chunks,
+    )
+
+    success = await ingestion_pipeline.process_document(
+        document_id="large-doc",
+        file_path=__file__,
+        file_type="TXT",
+        document_name="Large CSE Syllabus",
+        category="Academics",
+    )
+
+    assert success is True
+    assert embedding_batch_sizes == [2, 2, 1]
+    assert chunks_collection.bulk_write_calls == 4
+    assert len(chunks_collection.records) == 5
+    assert documents.last_update["$set"]["status"] == DocumentStatus.PROCESSED.value
+
+
 async def _async_bytes(content: bytes) -> bytes:
     return content
+
+
+async def _async_sleep():
+    return None

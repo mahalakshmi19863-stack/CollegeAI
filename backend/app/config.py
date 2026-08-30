@@ -78,6 +78,7 @@ class Settings(BaseSettings):
         default="gemini-embedding-001", description="Embedding model name"
     )
     EMBEDDING_DIMENSION: int = 768
+    EMBEDDING_BATCH_SIZE: int = 32
 
     # RAG Settings
     TOP_K: int = 5
@@ -85,6 +86,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 120
     MAX_FILE_SIZE_MB: int = 20
+    INGESTION_BATCH_SIZE: int = 64
     PROCESSING_STALE_MINUTES: int = 30
 
     # CORS Configuration

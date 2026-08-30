@@ -105,22 +105,25 @@ class EmbeddingService:
             client = genai.Client(api_key=self.api_key)
             embeddings: List[List[float]] = []
 
-            for text in texts:
+            batch_size = max(1, settings.EMBEDDING_BATCH_SIZE)
+            for start in range(0, len(texts), batch_size):
+                batch = texts[start : start + batch_size]
                 response = await asyncio.to_thread(
                     client.models.embed_content,
                     model=self.model,
-                    contents=text,
+                    contents=batch,
                     config=types.EmbedContentConfig(
                         output_dimensionality=self.dimension
                     ),
                 )
-                if hasattr(response, "embedding") and response.embedding:
-                    vec = response.embedding.values
-                elif hasattr(response, "embeddings") and response.embeddings:
-                    vec = response.embeddings[0].values
+                if hasattr(response, "embeddings") and response.embeddings:
+                    embeddings.extend(
+                        list(embedding.values) for embedding in response.embeddings
+                    )
+                elif len(batch) == 1 and hasattr(response, "embedding") and response.embedding:
+                    embeddings.append(list(response.embedding.values))
                 else:
-                    vec = _deterministic_local_embedding(text, self.dimension)
-                embeddings.append(list(vec))
+                    raise EmbeddingFailedException("Embedding provider returned an invalid batch response.")
 
             return self._validate_embeddings(embeddings)
         except Exception as e:
