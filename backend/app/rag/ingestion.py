@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
 import logging
 import os
+import tempfile
 import uuid
 from typing import Optional
 from ..config import settings
 from ..database.mongodb import db_manager
 from ..models.document import DocumentInDB, DocumentStatus
+from ..documents.storage import storage
 from .chunking import chunker
 from .embeddings import embedding_service
 from .extraction import extractor
@@ -22,12 +24,13 @@ class DocumentIngestionPipeline:
     async def process_document(
         self,
         document_id: str,
-        file_path: str,
+        file_path: Optional[str],
         file_type: str,
         document_name: str,
         category: str,
         department: Optional[str] = "General",
         version: int = 1,
+        source_reference: Optional[str] = None,
     ) -> bool:
         """Process an uploaded document through the complete RAG ingestion pipeline."""
         logger.info(f"Starting ingestion for document {document_id} ({document_name})...")
@@ -37,12 +40,24 @@ class DocumentIngestionPipeline:
             document_id, DocumentStatus.PROCESSING
         )
 
+        temporary_path = None
         try:
             # 2. Extract text and page numbers
-            if not os.path.exists(file_path):
-                raise FileNotFoundError(f"File not found on disk at {file_path}")
+            extraction_path = file_path
+            if source_reference:
+                source_bytes = await storage.read_document(source_reference)
+                suffix = f".{file_type.lower().lstrip('.') }"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temporary_file:
+                    temporary_file.write(source_bytes)
+                    temporary_path = temporary_file.name
+                extraction_path = temporary_path
 
-            pages_content, total_pages = extractor.extract(file_path, file_type)
+            if not extraction_path or not os.path.exists(extraction_path):
+                raise FileNotFoundError(
+                    f"Stored document is unavailable: {source_reference or file_path}"
+                )
+
+            pages_content, total_pages = extractor.extract(extraction_path, file_type)
             if not pages_content:
                 raise ValueError("No extractable text found in the document.")
 
@@ -117,12 +132,17 @@ class DocumentIngestionPipeline:
         except Exception as e:
             err_msg = str(e)
             logger.error(f"Ingestion failed for document {document_id}: {err_msg}")
+            if temporary_path and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
             await self._update_document_status(
                 document_id=document_id,
                 status=DocumentStatus.FAILED,
                 error_message=err_msg,
             )
             return False
+        finally:
+            if temporary_path and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
 
     async def _update_document_status(
         self,

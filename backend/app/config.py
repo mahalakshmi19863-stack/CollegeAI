@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 120
     MAX_FILE_SIZE_MB: int = 20
+    PROCESSING_STALE_MINUTES: int = 30
 
     # CORS Configuration
     FRONTEND_URL: str = Field(

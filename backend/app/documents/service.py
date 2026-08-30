@@ -222,7 +222,7 @@ class DocumentService:
 
         if storage_path:
             try:
-                storage.delete(storage_path)
+                await storage.delete_document(storage_path)
             except Exception:
                 pass
 
@@ -234,6 +234,26 @@ class DocumentService:
 
         vector_search_engine.remove_memory_chunks_for_doc(doc_id)
         return True
+
+    @classmethod
+    async def recover_stale_processing_documents(cls, stale_before: datetime) -> int:
+        """Mark interrupted jobs failed so they can be explicitly retried."""
+        if not db_manager.is_connected or db_manager.documents is None:
+            return 0
+        result = await db_manager.documents.update_many(
+            {
+                "status": DocumentStatus.PROCESSING.value,
+                "updated_at": {"$lt": stale_before},
+            },
+            {
+                "$set": {
+                    "status": DocumentStatus.FAILED.value,
+                    "processing_error": "Document processing was interrupted; reprocess the document.",
+                    "updated_at": utc_now(),
+                }
+            },
+        )
+        return result.modified_count
 
     @staticmethod
     def _to_response(doc_dict: dict) -> DocumentResponse:

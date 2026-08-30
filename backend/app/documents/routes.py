@@ -67,7 +67,7 @@ async def upload_document(
         )
 
     # 3. Save through the configured storage provider
-    file_path = storage.save(filename, content)
+    storage_reference = await storage.save_document(filename, content)
 
     # 4. Create document record
     try:
@@ -76,7 +76,7 @@ async def upload_document(
             original_filename=filename,
             file_type=ext,
             file_size=file_size,
-            storage_path=file_path,
+            storage_path=storage_reference,
             uploaded_by=current_user.name,
             category=category,
             department=department,
@@ -84,19 +84,20 @@ async def upload_document(
             version=version,
         )
     except Exception:
-        storage.delete(file_path)
+        await storage.delete_document(storage_reference)
         raise
 
     # 5. Launch asynchronous background processing / ingestion
     background_tasks.add_task(
         process_document_background,
         document_id=doc.id,
-        file_path=file_path,
+        file_path=None,
         file_type=ext,
         document_name=doc.name,
         category=category,
         department=department or "General",
         version=version,
+        source_reference=doc.storage_reference,
     )
 
     return success_response(doc)
@@ -161,17 +162,16 @@ async def reprocess_document(
 ):
     """Trigger manual re-extraction, chunking, and re-indexing (Admin only)."""
     doc = await document_service.get_document_by_id(document_id)
-    file_path = storage.resolve(doc.storage_reference)
-
     background_tasks.add_task(
         process_document_background,
         document_id=doc.id,
-        file_path=file_path,
+        file_path=None,
         file_type=doc.file_type,
         document_name=doc.name,
         category=doc.category,
         department=doc.department or "General",
         version=doc.version,
+        source_reference=doc.storage_reference,
     )
 
     return success_response(doc)
@@ -200,7 +200,7 @@ async def replace_document(
             f"File size exceeds maximum allowed {settings.MAX_FILE_SIZE_MB}MB."
         )
 
-    file_path = storage.save(filename, content)
+    storage_reference = await storage.save_document(filename, content)
 
     try:
         replacement = await document_service.create_document(
@@ -208,7 +208,7 @@ async def replace_document(
             original_filename=filename,
             file_type=ext,
             file_size=len(content),
-            storage_path=file_path,
+            storage_path=storage_reference,
             uploaded_by=current_user.name,
             category=existing.category,
             department=existing.department,
@@ -216,16 +216,17 @@ async def replace_document(
             version=existing.version + 1,
         )
     except Exception:
-        storage.delete(file_path)
+        await storage.delete_document(storage_reference)
         raise
     background_tasks.add_task(
         process_document_background,
         document_id=replacement.id,
-        file_path=file_path,
+        file_path=None,
         file_type=ext,
         document_name=replacement.name,
         category=replacement.category,
         department=replacement.department or "General",
         version=replacement.version,
+        source_reference=replacement.storage_reference,
     )
     return success_response(replacement)

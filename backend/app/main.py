@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 import logging
 import sys
 from fastapi import FastAPI, HTTPException, Request, status
@@ -13,6 +14,7 @@ from .chat.routes import router as chat_router
 from .config import settings
 from .database.mongodb import db_manager
 from .documents.routes import router as documents_router
+from .documents.service import document_service
 from .feedback.routes import router as feedback_router
 from .utils.errors import AppException
 from .utils.responses import error_response, success_response
@@ -31,6 +33,15 @@ async def lifespan(app: FastAPI):
     # Startup: Connect to MongoDB
     logger.info(f"Starting {settings.PROJECT_NAME} v{settings.VERSION}...")
     await db_manager.connect_to_database()
+    stale_before = datetime.now(timezone.utc) - timedelta(
+        minutes=settings.PROCESSING_STALE_MINUTES
+    )
+    recovered = await document_service.recover_stale_processing_documents(stale_before)
+    if recovered:
+        logger.warning(
+            "Marked %s stale document jobs as FAILED for manual reprocessing.",
+            recovered,
+        )
     if settings.ADMIN_INITIAL_PASSWORD:
         configured = await auth_service.apply_initial_admin_password_if_configured()
         if configured:
