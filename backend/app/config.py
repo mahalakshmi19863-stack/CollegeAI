@@ -30,6 +30,15 @@ class Settings(BaseSettings):
         description="Keep the in-memory fallback active when Atlas or local MongoDB is unavailable",
     )
 
+    ADMIN_EMAIL: str = Field(
+        default="phase5.live.e28f8a94d7@college.edu",
+        description="Canonical admin email used for the existing CollegeAI administrator account.",
+    )
+    ADMIN_INITIAL_PASSWORD: Optional[str] = Field(
+        default=None,
+        description="Optional one-time reset password for the existing admin account. Never commit this value; set it in Render/Env only.",
+    )
+
     # JWT Authentication
     JWT_SECRET: str = Field(
         default_factory=lambda: os.getenv("JWT_SECRET") or secrets.token_urlsafe(32),

@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from .admin.routes import router as admin_router
 from .auth.routes import router as auth_router
+from .auth.service import auth_service
 from .chat.routes import router as chat_router
 from .config import settings
 from .database.mongodb import db_manager
@@ -30,6 +31,12 @@ async def lifespan(app: FastAPI):
     # Startup: Connect to MongoDB
     logger.info(f"Starting {settings.PROJECT_NAME} v{settings.VERSION}...")
     await db_manager.connect_to_database()
+    if settings.ADMIN_INITIAL_PASSWORD:
+        configured = await auth_service.apply_initial_admin_password_if_configured()
+        if configured:
+            logger.info("Initial admin password reset applied for configured admin email.")
+        else:
+            logger.warning("Initial admin password reset was not applied because the admin account was not found.")
     yield
     # Shutdown: Close database connection
     logger.info("Shutting down CollegeAI...")
