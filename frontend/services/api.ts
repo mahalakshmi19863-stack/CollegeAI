@@ -9,12 +9,15 @@ import {
   User,
 } from "../types";
 
-const API_BASE_URL =
+const configuredApiUrl =
   process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === "development" ? "http://localhost:8002" : "");
+  (process.env.NODE_ENV === "development"
+    ? "http://localhost:8002/api"
+    : "https://collegeai-1.onrender.com/api");
+const API_BASE_URL = configuredApiUrl.replace(/\/$/, "");
 
 export const apiClient = axios.create({
-  baseURL: `${API_BASE_URL}/api`,
+  baseURL: API_BASE_URL,
   headers: {
     "Content-Type": "application/json",
   },
