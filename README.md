@@ -7,7 +7,7 @@ CollegeAI is a full-stack Retrieval-Augmented Generation (RAG) assistant designe
 
 ## 🚀 Live Demo
 
-- **Frontend Application (Vercel):** [https://temporary-instant-harp-tb08yqz.vercel.app](https://temporary-instant-harp-tb08yqz.vercel.app)
+- **Frontend Application (Vercel):** [https://college-ai-eight.vercel.app/](https://college-ai-eight.vercel.app/)
 - **Backend API Service (Render):** [https://collegeai-1.onrender.com/api](https://collegeai-1.onrender.com/api)
 - **API Health Check:** [https://collegeai-1.onrender.com/api/health](https://collegeai-1.onrender.com/api/health)
 
