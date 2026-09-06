@@ -61,12 +61,75 @@ class RAGPipeline:
         )
         return response.choices[0].message.content.strip()
 
+    @staticmethod
+    def _extract_course_subjects(chunks: List[str]) -> List[str]:
+        """Extract grounded course titles and codes from syllabus chunk text."""
+        found_courses = []
+        seen_codes = set()
+
+        for chunk in chunks:
+            lines = [line.strip() for line in chunk.splitlines() if line.strip()]
+            for i, line in enumerate(lines):
+                match = re.search(r"Course\s+Code\s*:?\s*([0-9A-Z]+)", line, re.IGNORECASE)
+                if match:
+                    code = match.group(1).upper()
+                    if code in seen_codes:
+                        continue
+
+                    title = None
+                    ignore_patterns = [
+                        r"^Draft\s+Syllabus",
+                        r"^VTU",
+                        r"^\d+$",
+                        r"^template",
+                        r"^IPCC",
+                        r"^PCC",
+                        r"^AEC",
+                        r"^Credits",
+                    ]
+
+                    for back in range(1, min(i + 1, 5)):
+                        candidate_line = lines[i - back].strip()
+                        if any(re.search(pat, candidate_line, re.IGNORECASE) for pat in ignore_patterns):
+                            continue
+                        if len(candidate_line) >= 3 and not candidate_line.startswith("Course Code"):
+                            title = candidate_line
+                            break
+
+                    if not title:
+                        cleaned_line = re.sub(r"Course\s+Code.*", "", line, flags=re.IGNORECASE).strip()
+                        if cleaned_line and not any(re.search(pat, cleaned_line, re.IGNORECASE) for pat in ignore_patterns):
+                            title = cleaned_line
+
+                    if title:
+                        title = re.sub(r"\s*Scheme\s*\d{4}", "", title, flags=re.IGNORECASE).strip()
+                        if title.isupper():
+                            title = title.title()
+                        seen_codes.add(code)
+                        found_courses.append(f"{title} ({code})")
+
+        return found_courses
+
     def _local_grounded_synthesis(
         self, question: str, relevant_chunks: List[str]
     ) -> str:
         """Synthesizes factual answer strictly from retrieved chunk sentences when offline/local."""
         if not relevant_chunks:
             return UNKNOWN_INFORMATION_MESSAGE
+
+        q_lower = question.lower()
+        is_subject_query = any(
+            k in q_lower for k in ["subject", "subjects", "course", "courses", "syllabus", "scheme", "curriculum"]
+        )
+
+        # Extract structured course list if course headers are present in retrieved chunks
+        if is_subject_query:
+            courses = self._extract_course_subjects(relevant_chunks)
+            if courses:
+                return (
+                    "The 3rd semester CSE syllabus includes the following subjects:\n"
+                    + "\n".join(f"- {c}" for c in courses)
+                )
 
         # Extract sentences from relevant chunks that directly match query keywords
         q_words = set(

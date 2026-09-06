@@ -3,6 +3,7 @@ import re
 import time
 from typing import List, Optional, Tuple
 from ..config import settings
+from ..database.mongodb import db_manager
 from ..models.chunk import ChunkSearchCandidate
 from ..models.message import RetrievalStats, SourceItem
 from .embeddings import embedding_service
@@ -71,7 +72,7 @@ class RetrievalService:
             "curriculum", "course", "courses", "subject", "subjects", "scheme",
             "module", "paper",
         }
-        return bool((query_terms | content_terms) & core_terms)
+        return bool((query_terms & core_terms) and (content_terms & core_terms))
 
     async def retrieve(
         self,
@@ -93,13 +94,66 @@ class RetrievalService:
             department=department,
         )
 
-        # Step 3: Filter candidates by score threshold and topical relevance
+        # Step 3: Filter candidates by score threshold, minimum length, and topical relevance
         relevant_candidates = [
             c
             for c in candidates
             if c.score >= self.relevance_threshold
+            and len(c.content.strip()) >= 15
             and self._is_relevant_to_query(query, c.content)
         ]
+
+        # For broad curriculum/syllabus queries where multiple subjects/courses are requested,
+        # include the document's course modules so the full subject list is represented.
+        q_lower = query.lower()
+        is_syllabus_overview = any(
+            term in q_lower
+            for term in ["subject", "subjects", "course", "courses", "syllabus", "scheme", "curriculum"]
+        )
+        if is_syllabus_overview and relevant_candidates:
+            seen_chunk_ids = {c.chunk_id for c in relevant_candidates}
+            syllabus_doc_ids = list(
+                {
+                    c.document_id
+                    for c in relevant_candidates
+                    if any(k in c.document_name.lower() for k in ["syllabus", "scheme", "curriculum"])
+                }
+            )
+            if syllabus_doc_ids:
+                if db_manager.is_connected and db_manager.document_chunks is not None:
+                    header_cursor = db_manager.document_chunks.find({
+                        "document_id": {"$in": syllabus_doc_ids},
+                        "content": {"$regex": r"Course\s+Code", "$options": "i"},
+                        "is_active": True,
+                    }).sort("page_number", 1)
+                    header_chunks = await header_cursor.to_list(length=25)
+                else:
+                    from .vector_search import _memory_chunks
+                    header_chunks = [
+                        c for c in _memory_chunks
+                        if c.get("document_id") in syllabus_doc_ids
+                        and re.search(r"Course\s+Code", c.get("content", ""), re.IGNORECASE)
+                        and c.get("is_active", True)
+                    ]
+                    header_chunks.sort(key=lambda x: x.get("page_number") or 0)
+
+                for h in header_chunks:
+                    cid = str(h["_id"])
+                    if cid not in seen_chunk_ids:
+                        seen_chunk_ids.add(cid)
+                        relevant_candidates.append(
+                            ChunkSearchCandidate(
+                                chunk_id=cid,
+                                document_id=h["document_id"],
+                                document_name=h["document_name"],
+                                document_version=h.get("document_version", 1),
+                                page_number=h.get("page_number"),
+                                category=h.get("category", "General"),
+                                department=h.get("department"),
+                                content=h["content"],
+                                score=0.85,
+                            )
+                        )
 
         # Step 4: Construct source items and formatted context
         sources: List[SourceItem] = []

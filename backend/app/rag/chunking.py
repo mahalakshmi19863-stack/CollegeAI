@@ -74,11 +74,16 @@ class SemanticChunker:
                         end = space_pos + 1
 
             chunk = text[start:end].strip()
-            if chunk:
+            if chunk and (len(chunk) >= 20 or not chunks):
                 chunks.append(chunk)
 
-            # Step forward by chunk_size - chunk_overlap
-            step = max(1, (end - start) - self.chunk_overlap)
+            if end >= text_len:
+                break
+
+            # Step forward by chunk_size - chunk_overlap with a guaranteed positive progression
+            step = max(self.chunk_size - self.chunk_overlap, (end - start) - self.chunk_overlap)
+            if step <= 0:
+                step = max(1, self.chunk_size - self.chunk_overlap)
             start += step
 
         return chunks
