@@ -11,7 +11,7 @@ interface AuthState {
   setToken: (token: string | null) => void;
   login: (email: string, password: string) => Promise<User>;
   register: (name: string, email: string, password: string, role?: UserRole) => Promise<User>;
-  logout: () => void;
+  logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
 }
 
@@ -62,7 +62,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  logout: () => {
+  logout: async () => {
+    try {
+      await api.auth.logout();
+    } catch {
+      // Ignore network errors so local session is always reliably cleared
+    }
     if (typeof window !== "undefined") {
       localStorage.removeItem("college_ai_token");
     }

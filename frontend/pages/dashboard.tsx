@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/router";
 import { Layout } from "../components/layout/Layout";
 import { useAuthStore } from "../store/authStore";
 import { useChatStore } from "../store/chatStore";
@@ -16,10 +17,12 @@ import {
   GraduationCap,
   Layers,
   Search,
+  LogOut,
 } from "lucide-react";
 
 export default function DashboardPage() {
-  const { user } = useAuthStore();
+  const router = useRouter();
+  const { user, logout } = useAuthStore();
   const {
     conversations,
     activeConversationId,
@@ -182,6 +185,37 @@ export default function DashboardPage() {
               })
             )}
           </div>
+
+          {/* User Profile & Logout */}
+          {user && (
+            <div className="p-3 border-t border-slate-200 bg-slate-50/80 flex items-center justify-between">
+              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                <div className="w-8 h-8 rounded-xl bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                  {user.name ? user.name[0].toUpperCase() : "U"}
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-xs font-semibold text-slate-800 truncate" title={user.name}>
+                    {user.name}
+                  </span>
+                  <span className="text-[10px] text-slate-500 truncate" title={user.email}>
+                    {user.email}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  await logout();
+                  router.push("/login");
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition flex-shrink-0 shadow-sm"
+                title="Log out"
+                id="sidebar-logout-btn"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-600" />
+                <span>Logout</span>
+              </button>
+            </div>
+          )}
         </aside>
 
         {/* Main Chat Interface */}

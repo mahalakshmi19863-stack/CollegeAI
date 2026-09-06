@@ -17,8 +17,8 @@ export const Navbar: React.FC = () => {
   const router = useRouter();
   const { user, logout } = useAuthStore();
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     router.push("/login");
   };
 
@@ -115,16 +115,25 @@ export const Navbar: React.FC = () => {
         <div className="flex items-center gap-3">
           {user ? (
             <div className="flex items-center gap-3">
-              <div className="hidden sm:flex flex-col text-right">
-                <span className="text-sm font-semibold text-slate-800">{user.name}</span>
-                <span className="text-xs text-slate-500">{user.role}</span>
+              <div className="flex flex-col text-right">
+                <span className="text-xs sm:text-sm font-semibold text-slate-800 leading-tight">
+                  {user.name}
+                </span>
+                <span
+                  className="text-[11px] text-slate-500 max-w-[150px] sm:max-w-[220px] truncate"
+                  title={user.email}
+                >
+                  {user.email}
+                </span>
               </div>
               <button
                 onClick={handleLogout}
-                className="p-2 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition shadow-sm"
                 title="Log out"
+                id="navbar-logout-btn"
               >
-                <LogOut className="w-5 h-5" />
+                <LogOut className="w-4 h-4 text-rose-600" />
+                <span>Log Out</span>
               </button>
             </div>
           ) : (
